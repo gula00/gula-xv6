@@ -1,4 +1,15 @@
+# Added features
+
+## kernel
+
+## user
+
+- sleep.c
+- (?) command line history (in sh.c)
+
 # Environment setup
+
+Debug mode
 
 ```bash
 make qemu-gdb
