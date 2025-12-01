@@ -4,7 +4,7 @@
 
 ## user
 
-- sleep.c
+- [lab0] sleep / pingpong / primes / find
 - (?) command line history (in sh.c)
 
 # Environment setup
