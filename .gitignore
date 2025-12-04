@@ -25,3 +25,5 @@ barrier
 .DS_Store
 *.dSYM
 *.pcap
+docs
+xv6-labs-2021

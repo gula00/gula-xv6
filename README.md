@@ -4,7 +4,8 @@
 
 ## user
 
-- [lab0] sleep / pingpong / primes / find
+- [unix utilities] sleep / pingpong / primes / find / xargs
+- [system calls] trace / sysinfo
 - (?) command line history (in sh.c)
 
 # Environment setup

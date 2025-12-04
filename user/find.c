@@ -57,7 +57,7 @@ find(char *path, const char* filename)
       memmove(p, de.name, DIRSIZ);
       p[DIRSIZ] = 0;
       if(stat(buf, &st) < 0){
-        printf("ls: cannot stat %s\n", buf);
+        printf("find: cannot stat %s\n", buf);
         continue;
       }
       find(buf, filename);

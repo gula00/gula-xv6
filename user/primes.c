@@ -44,7 +44,7 @@ int main(int argc, char *argv[]) {
     // exit(0);
   } else {
     close(p[0]);
-    for (int i = 2; i <= 35; i++) {
+    for (int i = 2; i <= 280; i++) {
       write(p[1], &i, sizeof(int));
     }
     close(p[1]);
