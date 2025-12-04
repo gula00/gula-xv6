@@ -1,9 +1,5 @@
 # Added features
 
-## kernel
-
-## user
-
 - [unix utilities] sleep / pingpong / primes / find / xargs
 - [system calls] trace / sysinfo
 - (?) command line history (in sh.c)

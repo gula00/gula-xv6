@@ -106,3 +106,9 @@ struct proc {
   char name[16];               // Process name (debugging)
   int trace_mask;              // Trace mask for system call tracing
 };
+
+// System info structure
+struct sysinfo {
+  uint64 freemem;   // amount of free memory (bytes)
+  uint64 nproc;     // number of process
+};
