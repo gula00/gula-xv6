@@ -196,6 +196,15 @@ UPROGS=\
 	$U/_trace\
 	$U/_sysinfotest
 
+ifeq ($(LAB),util)
+UPROGS += \
+	$U/_sleep \
+	$U/_pingpong \
+	$U/_primes \
+	$U/_find \
+	$U/_xargs
+endif
+
 
 
 

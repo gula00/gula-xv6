@@ -4,7 +4,6 @@
 #include "kernel/fs.h"
 #include "kernel/fcntl.h"
 
-// modified from 'ls.c'
 char*
 fmtname(char *path)
 {
@@ -17,7 +16,7 @@ fmtname(char *path)
 }
 
 void
-find(char *path, const char* filename)
+find(char *path, const char *filename)
 {
   char buf[512], *p;
   int fd;
@@ -25,12 +24,12 @@ find(char *path, const char* filename)
   struct stat st;
 
   if((fd = open(path, O_RDONLY)) < 0){
-    fprintf(2, "ls: cannot open %s\n", path);
+    fprintf(2, "find: cannot open %s\n", path);
     return;
   }
 
   if(fstat(fd, &st) < 0){
-    fprintf(2, "ls: cannot stat %s\n", path);
+    fprintf(2, "find: cannot stat %s\n", path);
     close(fd);
     return;
   }
@@ -38,12 +37,13 @@ find(char *path, const char* filename)
   switch(st.type){
   case T_DEVICE:
   case T_FILE:
-  if (strcmp(filename, fmtname(path)) == 0) printf("%s\n", path);
+    if (strcmp(filename, fmtname(path)) == 0)
+      printf("%s\n", path);
     break;
 
   case T_DIR:
     if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
-      printf("ls: path too long\n");
+      fprintf(2, "find: path too long\n");
       break;
     }
     strcpy(buf, path);
@@ -70,13 +70,11 @@ find(char *path, const char* filename)
 int
 main(int argc, char *argv[])
 {
-  int i;
-
-  if(argc < 3){
-    printf("error: not enough arguments\n");
+  if(argc != 3){
+    fprintf(2, "usage: find path filename\n");
     exit(1);
   }
-  for(i=2; i<argc; i++)
-    find(argv[1], argv[i]);
+
+  find(argv[1], argv[2]);
   exit(0);
 }

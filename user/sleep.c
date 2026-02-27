@@ -2,13 +2,11 @@
 #include "user/user.h"
 
 int main(int argc, char *argv[]) {
-  if (argc == 2) {
-    int n = atoi(argv[1]);
-    fprintf(1, "sleeping for %d seconds\n", n);
-    sleep(n);
-    exit(0);
-  } else {
-    fprintf(2, "ERROR!!!\n");
+  if (argc != 2) {
+    fprintf(2, "usage: sleep ticks\n");
     exit(1);
   }
+
+  sleep(atoi(argv[1]));
+  exit(0);
 }
