@@ -1,0 +1,49 @@
+﻿name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Check format
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy
+
+  test:
+    needs: build
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        base-img: [slim]
+        qemu-version: [6.2.0, 7.0.0, 7.1.0, 7.2.0, 8.0.5, 8.1.5, 8.2.2]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Pull image
+        run: docker pull ghcr.io/rustsbi/qemu:${{ matrix.base-img }}-${{ matrix.qemu-version }}-rv64
+
+      - name: Test
+        uses: addnab/docker-run-action@v3
+        with:
+          image: ghcr.io/rustsbi/qemu:${{ matrix.base-img }}-${{ matrix.qemu-version }}-rv64
+          options: -v ${{ github.workspace }}:/work
+          run: |
+            rustup component add llvm-tools-preview
+            rustup target add riscv64imac-unknown-none-elf
+            cd /work
+            cargo test

@@ -12,8 +12,15 @@ __attribute__ ((aligned (16))) char stack0[4096 * NCPU];
 
 // entry.S jumps here in machine mode on stack0.
 void
-start()
+start(uint64 hartid)
 {
+#ifdef USE_RUSTSBI
+  // RustSBI already enters the kernel in supervisor mode.
+  intr_off();
+  w_satp(0);
+  w_tp(hartid);
+  main();
+#else
   // set M Previous Privilege mode to Supervisor, for mret.
   unsigned long x = r_mstatus();
   x &= ~MSTATUS_MPP_MASK;
@@ -41,17 +48,23 @@ start()
   timerinit();
 
   // keep each CPU's hartid in its tp register, for cpuid().
-  int id = r_mhartid();
+  int id = hartid;
   w_tp(id);
 
   // switch to supervisor mode and jump to main().
   asm volatile("mret");
+#endif
 }
 
 // ask each hart to generate timer interrupts.
 void
 timerinit()
 {
+#ifdef USE_RUSTSBI
+  // In RustSBI path we are already in supervisor mode.
+  w_sie(r_sie() | SIE_SEIE | SIE_STIE | SIE_SSIE);
+  sbi_set_timer(r_time() + 1000000);
+#else
   // enable supervisor-mode timer interrupts.
   w_mie(r_mie() | MIE_STIE);
   
@@ -63,4 +76,5 @@ timerinit()
   
   // ask for the very first timer interrupt.
   w_stimecmp(r_time() + 1000000);
+#endif
 }

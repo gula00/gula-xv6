@@ -1,5 +1,48 @@
 # xv6-labs util
 
+## 启动方式
+
+- MIT 原版（无 SBI，`-bios none`，内核入口 `0x80000000`）：
+
+```bash
+make clean
+make qemu
+```
+
+- RustSBI 启动（内核入口 `0x80200000`）：
+
+```bash
+make rustsbi-build
+make qemu-rustsbi
+```
+
+- RustSBI + PKU 测试镜像（会把 `riscv64/` 程序打进 `fs.img`）：
+
+```bash
+make clean
+make PKU_TEST=1 qemu-rustsbi
+```
+
+## 两种测评方式（MIT / PKU）
+
+- MIT 6.S081 Lab 原生测评（当前仓库默认）：
+
+```bash
+make LAB=util grade
+```
+
+- PKU/oscomp 测评（已接入 `riscv64` 程序与 RustSBI 启动链）：
+
+```bash
+make run_test
+```
+
+如果要从官方 testsuits 重新编译并同步测评程序：
+
+```bash
+make pku-tests-update TESTSUITS_DIR=./testsuits-for-oskernel
+```
+
 对应 MIT 6.S081 util lab：<https://pdos.csail.mit.edu/6.828/2021/labs/util.html>。
 
 这次实现了 5 个用户态工具：`sleep`、`pingpong`、`primes`、`find`、`xargs`。这些题虽然代码量不大，但非常考验对 Unix 进程模型、管道语义、文件描述符生命周期的理解。

@@ -85,6 +85,14 @@ endif
 
 QEMU = qemu-system-riscv64
 
+USE_RUSTSBI ?= 0
+RUSTSBI_BIN ?= bootloader/SBI/sbi-qemu
+KERNEL_LINK_ADDR = $(if $(filter 1,$(USE_RUSTSBI)),0x80200000,0x80000000)
+QEMU_BIOS = $(if $(filter 1,$(USE_RUSTSBI)),-bios $(RUSTSBI_BIN),-bios none)
+ifeq ($(USE_RUSTSBI),1)
+XCFLAGS += -DUSE_RUSTSBI
+endif
+
 CC = $(TOOLPREFIX)gcc
 AS = $(TOOLPREFIX)gas
 LD = $(TOOLPREFIX)ld
@@ -96,6 +104,11 @@ CFLAGS = -Wall -Werror -O -fno-omit-frame-pointer -ggdb
 ifdef LAB
 LABUPPER = $(shell echo $(LAB) | tr a-z A-Z)
 XCFLAGS += -DSOL_$(LABUPPER) -DLAB_$(LABUPPER)
+endif
+
+PKU_TEST ?= 0
+ifeq ($(PKU_TEST),1)
+XCFLAGS += -DPKU_TEST
 endif
 
 CFLAGS += $(XCFLAGS)
@@ -123,9 +136,10 @@ CFLAGS += -fno-pie -nopie
 endif
 
 LDFLAGS = -z max-page-size=4096
+KERNEL_LDFLAGS = $(LDFLAGS) -defsym KERNEL_LINK_ADDR=$(KERNEL_LINK_ADDR)
 
 $K/kernel: $(OBJS) $(OBJS_KCSAN) $K/kernel.ld $U/initcode
-	$(LD) $(LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
+	$(LD) $(KERNEL_LDFLAGS) -T $K/kernel.ld -o $K/kernel $(OBJS) $(OBJS_KCSAN)
 	$(OBJDUMP) -S $K/kernel > $K/kernel.asm
 	$(OBJDUMP) -t $K/kernel | sed '1,/SYMBOL TABLE/d; s/ .* / /; /^$$/d' > $K/kernel.sym
 
@@ -270,9 +284,15 @@ ifeq ($(LAB),util)
 	UEXTRA += user/xargstest.sh
 endif
 
+RISCV_TEST_PROGS := $(shell if [ -d riscv64 ]; then find riscv64 -type f; fi)
+ifeq ($(PKU_TEST),1)
+FS_IMG_FILES = README $(UEXTRA) $(UPROGS) $(RISCV_TEST_PROGS)
+else
+FS_IMG_FILES = README $(UEXTRA) $(UPROGS)
+endif
 
-fs.img: mkfs/mkfs README $(UEXTRA) $(UPROGS)
-	mkfs/mkfs fs.img README $(UEXTRA) $(UPROGS)
+fs.img: mkfs/mkfs $(FS_IMG_FILES)
+	mkfs/mkfs fs.img $(FS_IMG_FILES)
 
 -include kernel/*.d user/*.d
 
@@ -284,6 +304,9 @@ clean:
         $U/usys.S \
 	$(UPROGS) \
 	ph barrier
+
+clean-kernel:
+	rm -f $K/*.o $K/*.d $K/*.asm $K/*.sym $K/kernel
 
 # try to generate a unique GDB port
 GDBPORT = $(shell expr `id -u` % 5000 + 25000)
@@ -300,7 +323,7 @@ endif
 
 FWDPORT = $(shell expr `id -u` % 5000 + 25999)
 
-QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
+QEMUOPTS = -machine virt $(QEMU_BIOS) -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=fs.img,if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
@@ -312,6 +335,51 @@ endif
 
 qemu: $K/kernel fs.img
 	$(QEMU) $(QEMUOPTS)
+
+qemu-rustsbi: USE_RUSTSBI=1
+qemu-rustsbi: CPUS=1
+qemu-rustsbi:
+	@$(MAKE) clean-kernel
+	@$(MAKE) qemu USE_RUSTSBI=1 CPUS=$(CPUS) PKU_TEST=$(PKU_TEST)
+
+qemu-rustsbi-debug: USE_RUSTSBI=1
+qemu-rustsbi-debug: CPUS=1
+qemu-rustsbi-debug: $K/kernel fs.img
+	$(QEMU) $(QEMUOPTS) -serial mon:stdio -d guest_errors,unimp -D qemu-rustsbi.log
+
+RUSTSBI_TOOLCHAIN ?= nightly-2023-06-01
+RUSTSBI_TARGET ?= riscv64imac-unknown-none-elf
+
+rustsbi-setup:
+	@rustup toolchain install $(RUSTSBI_TOOLCHAIN) --profile minimal
+	@rustup target add --toolchain $(RUSTSBI_TOOLCHAIN) $(RUSTSBI_TARGET)
+
+rustsbi-build: rustsbi-setup
+	@cargo +$(RUSTSBI_TOOLCHAIN) build --manifest-path bootloader/SBI/rustsbi-qemu/Cargo.toml -p rustsbi-qemu --release --target $(RUSTSBI_TARGET)
+	@cp bootloader/SBI/rustsbi-qemu/target/$(RUSTSBI_TARGET)/release/rustsbi-qemu $(RUSTSBI_BIN)
+
+check-pku-tests:
+	@test -d riscv64 || (echo "missing riscv64 tests, run: make pku-tests-update TESTSUITS_DIR=/path/to/testsuits-for-oskernel" && exit 1)
+
+local:
+	@$(MAKE) clean
+	@$(MAKE) qemu
+
+local-rustsbi:
+	@$(MAKE) clean
+	@$(MAKE) qemu-rustsbi
+
+run_test: check-pku-tests
+	@$(MAKE) clean PKU_TEST=1
+	@$(MAKE) qemu-rustsbi PKU_TEST=1
+
+TESTSUITS_DIR ?= $(HOME)/OS/testsuits-for-oskernel
+pku-tests-update:
+	@./scripts/recompile_pku_tests.sh "$(TESTSUITS_DIR)"
+
+all: $K/kernel
+	@cp $K/kernel ./kernel-qemu
+	@if [ -f ./bootloader/SBI/sbi-qemu ]; then cp ./bootloader/SBI/sbi-qemu ./sbi-qemu; fi
 
 .gdbinit: .gdbinit.tmpl-riscv
 	sed "s/:1234/:$(GDBPORT)/" < $^ > $@
@@ -418,4 +486,4 @@ myapi.key:
 	fi;
 
 
-.PHONY: handin tarball tarball-pref clean grade handin-check
+.PHONY: handin tarball tarball-pref clean clean-kernel grade handin-check local run_test all qemu-rustsbi qemu-rustsbi-debug rustsbi-setup rustsbi-build local-rustsbi check-pku-tests pku-tests-update

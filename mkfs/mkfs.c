@@ -128,14 +128,13 @@ main(int argc, char *argv[])
   iappend(rootino, &de, sizeof(de));
 
   for(i = 2; i < argc; i++){
-    // get rid of "user/"
-    char *shortname;
-    if(strncmp(argv[i], "user/", 5) == 0)
-      shortname = argv[i] + 5;
-    else
-      shortname = argv[i];
-    
-    assert(index(shortname, '/') == 0);
+    // use basename so callers can pass paths like user/_cat or riscv64/open
+    char *shortname = argv[i];
+    char *slash = strrchr(shortname, '/');
+    if(slash != 0)
+      shortname = slash + 1;
+
+    assert(shortname[0] != 0);
 
     if((fd = open(argv[i], 0)) < 0)
       die(argv[i]);

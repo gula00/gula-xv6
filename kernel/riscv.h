@@ -284,6 +284,20 @@ r_time()
   return x;
 }
 
+// SBI TIME extension: set timer event.
+static inline void
+sbi_set_timer(uint64 stime_value)
+{
+  register uint64 a0 asm("a0") = stime_value;
+  register uint64 a1 asm("a1") = 0;
+  register uint64 a6 asm("a6") = 0;
+  register uint64 a7 asm("a7") = 0x54494D45;
+  asm volatile("ecall"
+               : "+r"(a0)
+               : "r"(a1), "r"(a6), "r"(a7)
+               : "memory");
+}
+
 // enable device interrupts
 static inline void
 intr_on()

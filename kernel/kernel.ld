@@ -7,7 +7,7 @@ SECTIONS
    * ensure that entry.S / _entry is at 0x80000000,
    * where qemu's -kernel jumps.
    */
-  . = 0x80000000;
+  . = DEFINED(KERNEL_LINK_ADDR) ? KERNEL_LINK_ADDR : 0x80000000;
 
   .text : {
     *(.text .text.*)

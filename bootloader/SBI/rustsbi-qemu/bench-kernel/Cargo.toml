@@ -1,0 +1,14 @@
+[package]
+name = "bench-kernel"
+version = "0.0.1"
+edition = "2021"
+authors = ["YdrMaster <ydrml@hotmail.com>"]
+publish = false
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+sbi-rt = "0.0.3"
+riscv = "0.10.1"
+uart16550 = "0.0.1"
+rcore-console = "0.0.0"

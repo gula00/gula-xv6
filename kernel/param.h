@@ -16,10 +16,14 @@
 #ifdef LAB_FS
 #define FSSIZE       200000  // size of file system in blocks
 #else
+#ifdef PKU_TEST
+#define FSSIZE       200000  // size of file system for PKU tests
+#else
 #ifdef LAB_LOCK
 #define FSSIZE       10000  // size of file system in blocks
 #else
 #define FSSIZE       2000   // size of file system in blocks
+#endif
 #endif
 #endif
 #define MAXPATH      128   // maximum file path name
@@ -29,5 +33,4 @@
 #else
 #define USERSTACK    1     // user stack pages
 #endif
-
 
