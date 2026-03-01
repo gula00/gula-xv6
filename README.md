@@ -1,4 +1,4 @@
-# xv6-labs util
+# xv6-labs
 
 ## 启动方式
 
@@ -42,6 +42,8 @@ make run_test
 ```bash
 make pku-tests-update TESTSUITS_DIR=./testsuits-for-oskernel
 ```
+
+## utils lab
 
 对应 MIT 6.S081 util lab：<https://pdos.csail.mit.edu/6.828/2021/labs/util.html>。
 
@@ -136,4 +138,118 @@ sh < xargstest.sh
 
 ```bash
 make LAB=util grade
+```
+
+## syscall lab (trace + sysinfo)
+
+对应题目：<https://pdos.csail.mit.edu/6.828/2021/labs/syscall.html>
+
+先不急着写 `trace` 和 `sysinfo` 逻辑，而是把系统调用从用户态到内核态再回来的骨架补完整。
+
+从题目出发。它要求新增两个 syscall：
+
+- `trace(mask)`：按位跟踪系统调用，打印 `pid + syscall 名字 + 返回值`。
+- `sysinfo(struct sysinfo *)`：把系统空闲内存和进程数量写回用户态结构体。
+
+它们共享同一套入口：用户态声明、stub 生成、编号注册、内核分发。
+
+### 先把 syscall 骨架接通
+
+完整链路是这样：
+
+1. 在 `user/user.h` 里声明用户态函数原型。
+2. 在 `user/usys.pl` 里加 `entry("xxx")`，让构建系统生成汇编桩。
+3. 在 `kernel/syscall.h` 里分配 syscall 编号。
+4. 在 `kernel/syscall.c` 里声明 `extern uint64 sys_xxx(void);` 并加入分发表。
+
+这一套做完以后，`trace` 和 `sysinfo` 能被调用到内核。
+
+### trace：打印 syscall
+
+`trace` 的设计很直接：每个进程挂一个 `trace_mask`。谁调用了 `trace(mask)`，就把 mask 存在当前进程里。这个字段放在 `kernel/proc.h` 的 `struct proc` 里最自然。
+
+对应内核实现 `sys_trace()` 在 `kernel/sysproc.c`，逻辑非常短：
+
+```c
+uint64
+sys_trace(void)
+{
+  int mask;
+  argint(0, &mask);
+  myproc()->trace_mask = mask;
+  return 0;
+}
+```
+
+还有一个关键：子进程要继承 tracing。这个不是在 syscall 层做，而是在 `fork()` 做。也就是 `kernel/proc.c` 里复制上下文时，顺手复制：
+
+```c
+np->trace_mask = p->trace_mask;
+```
+
+打印时机也很重要。如果太早打印，你拿不到 syscall 的最终返回值；正确位置是在 `kernel/syscall.c:syscall()` 调用具体 `syscalls[num]()` 之后：
+
+```c
+p->trapframe->a0 = syscalls[num]();
+if((p->trace_mask & (1 << num)) != 0) {
+  printf("%d: syscall %s -> %ld\n", p->pid, syscall_names[num], p->trapframe->a0);
+}
+```
+
+这里我配了一个 syscall 名称数组，这样日志可读性高很多。
+
+### sysinfo：把内核数据安全地带回用户态
+
+`sysinfo` 的重点在于用户态地址不能直接在内核里解引用。
+
+用户传进来的 `struct sysinfo *` 只是用户虚拟地址，不是内核可以直接 `*ptr = ...` 的安全指针。正确做法是：先在内核栈上准备好临时 `struct sysinfo info`，再用 `copyout(p->pagetable, user_addr, (char *)&info, sizeof(info))` 按当前进程页表拷回用户空间。更具体地说，`copyout` 会用这个进程的页表 `pagetable` 把用户虚拟地址 `dstva` 翻译到对应物理页，然后把内核缓冲区的数据复制过去。
+
+先定义结构体。题目让你用 `struct sysinfo`，我把它放在独立头文件 `kernel/sysinfo.h`：
+
+```c
+struct sysinfo {
+  uint64 freemem;
+  uint64 nproc;
+};
+```
+
+用户态 `user/user.h` 里只需要前置声明和原型：
+
+```c
+struct sysinfo;
+int sysinfo(struct sysinfo *);
+```
+
+为什么用户态代码会 `#include "kernel/sysinfo.h"`？因为 `struct sysinfo` 属于 syscall 的 ABI（内核写、用户读），两边必须看到完全一致的内存布局。与其在 user/kernel 各维护一份，不如只保留一份。所以 `user/user.h` 里只做前置声明（让函数原型能成立），真正要访问字段的文件（比如 `user/sysinfotest.c`）再包含 `kernel/sysinfo.h`。
+
+接下来回到题目本身：`sysinfo` 只要填两项数据。
+
+- `freemem()`：在 `kernel/kalloc.c` 遍历空闲链表，每个节点加一个 `PGSIZE`，得到当前空闲物理内存字节数。
+- `nproc()`：在 `kernel/proc.c` 遍历 `proc[]`，统计 `state != UNUSED` 的项。
+
+补一下 `kalloc` 的原理：xv6 的物理内存分配器是“按页分配 + 空闲单链表”。`kinit()` 会把可用物理页挂进全局 `kmem.freelist`；`kalloc()` 从链表头摘一页，`kfree()` 再头插回去，整个过程用 `kmem.lock` 保护并发。`freemem()` 统计的就是这个全局 freelist 里还剩多少页，反映的是系统级空闲内存，不是某个进程私有内存。
+
+`proc` 指 xv6 全局进程表 `struct proc proc[NPROC]`，`nproc()` 用 `for(p = proc; p < &proc[NPROC]; p++)` 从头到尾扫一遍并计数；这个表在 `procinit()` 已初始化好，所以统计时直接遍历即可。
+
+最后 `sys_sysinfo()`（`kernel/sysproc.c`）做三件事：
+
+1. `argaddr(0, &addr)` 取用户传入指针。
+2. 在内核栈上填一个 `struct sysinfo info`。
+3. `copyout(p->pagetable, addr, (char *)&info, sizeof(info))` 回写用户空间。
+
+### 验证顺序
+
+先手工测：
+
+```sh
+trace 32 grep hello README
+trace 2147483647 grep hello README
+trace 2 usertests forkforkfork
+sysinfotest
+```
+
+都对了以后再跑：
+
+```bash
+make LAB=syscall grade
 ```

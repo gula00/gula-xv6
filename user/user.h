@@ -23,10 +23,7 @@ char* sbrk(int);
 int sleep(int);
 int uptime(void);
 int trace(int);
-struct sysinfo {
-  uint64 freemem;   // amount of free memory (bytes)
-  uint64 nproc;     // number of process
-};
+struct sysinfo;
 int sysinfo(struct sysinfo *);
 
 // ulib.c
