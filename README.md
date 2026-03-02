@@ -43,6 +43,8 @@ make run_test
 make pku-tests-update TESTSUITS_DIR=./testsuits-for-oskernel
 ```
 
+---
+
 ## utils lab
 
 对应 MIT 6.S081 util lab：<https://pdos.csail.mit.edu/6.828/2021/labs/util.html>。
@@ -139,6 +141,8 @@ sh < xargstest.sh
 ```bash
 make LAB=util grade
 ```
+
+---
 
 ## syscall lab (trace + sysinfo)
 
@@ -253,3 +257,150 @@ sysinfotest
 ```bash
 make LAB=syscall grade
 ```
+
+---
+
+## pgtbl lab (ugetpid + vmprint + pgaccess)
+
+对应题目：<https://pdos.csail.mit.edu/6.828/2021/labs/pgtbl.html>
+
+`syscall` lab 里我们更多在系统调用分发层打转；到了 `pgtbl`，重点变成页表本身：一是让用户态能通过共享页拿到轻量信息（`ugetpid`），二是把三级页表结构清晰打印出来（`vmprint`），三是利用 PTE 的 Accessed 位做访问检测（`pgaccess`）。 
+
+`ugetpid` 的核心是给每个进程多映射一页 `USYSCALL`。这个地址放在 `TRAPFRAME` 下面（`kernel/memlayout.h`），并定义共享结构：
+
+```c
+struct usyscall {
+  int pid;
+};
+```
+
+接下来在 `struct proc` 里加 `usyscall` 指针（`kernel/proc.h`），在 `allocproc()` 分配这页并写入 `pid`，在 `freeproc()` 释放，最后在 `proc_pagetable()` 里映射到用户地址空间，权限给 `PTE_R | PTE_U`。这样用户态就可以只读这页，不用陷入内核就拿到 pid。用户态函数 `ugetpid()` 放在 `user/ulib.c`，本质就是把 `USYSCALL` 强转成 `struct usyscall *` 后读字段返回。
+
+`ugetpid()` 里看到的 `u`（例如 `0x3fffffd000`）是用户虚拟地址。这个地址在每个进程里看起来一样，因为它是固定槽位 `USYSCALL`；但不同进程页表会把它翻译到不同物理页（各自的 `p->usyscall`），所以每个进程读到的是自己的 `pid`。
+
+`0x3fffffd000` 这个值是 `memlayout.h` 宏按页大小逐级减出来的：
+
+```c
+#define PGSIZE     4096              // 0x1000
+#define MAXVA      (1L << 38)        // 0x4000000000
+#define TRAMPOLINE (MAXVA - PGSIZE)  // 0x3ffffff000
+#define TRAPFRAME  (TRAMPOLINE - PGSIZE) // 0x3fffffe000
+#define USYSCALL   (TRAPFRAME - PGSIZE)  // 0x3fffffd000
+```
+
+也就是：`USYSCALL = 0x4000000000 - 3 * 0x1000 = 0x3fffffd000`。
+
+这里的 `MAXVA` 来自 RISC-V 的 `Sv39` 分页模式。`Sv39` 可以理解为“39 位虚拟地址 + 三级页表”：每级页表索引 9 位，再加 12 位页内偏移（`9+9+9+12=39`）。xv6 里之所以用 `MAXVA = (1L << 38)`，是为了只使用最高位为 0 的那一半地址空间，避免处理高位符号扩展地址带来的复杂性。
+
+> 这个题目想传达的点：并不是所有信息都必须经 syscall 才能给用户态，关键是映射和权限要设计清楚。
+
+`vmprint` 这题要递归打印有效 PTE。实现放在 `kernel/vm.c`：外层 `vmprint()` 先打印根页表地址，内层 `vmprintwalk()` 遍历 512 个表项；遇到无效项跳过，遇到有效项打印缩进和 `pte/pa`，如果是非叶子项就继续递归。缩进格式按实验脚本要求用 `" .."`，层级越深前缀越长。
+
+结合一次实际调试值帮助理解：如果某项 `pte = 0x21fd2401`，先看低 10 位标志位 `pte & 0x3ff = 0x001`，说明只有 `PTE_V` 置位，`R/W/X` 都是 0，所以它不是叶子映射，而是“指向下一层页表”。此时 `PTE2PA(pte) = ((pte >> 10) << 12)` 可以提取出下一层页表的物理页地址（例如 `0x87f49000`），`vmprintwalk()` 就会递归到这一页继续打印。反过来，如果某项同时带 `R/W/X` 任意一位，它就是叶子项：打印后不再递归，表示该虚拟页已经映射到最终物理页。
+
+另外题目会检查是否在合适时机打印页表，我是放在 `exec()` 提交新页表之后、且 `pid == 1` 时打印（`kernel/exec.c`）。
+
+最后是 `pgaccess`。这部分其实就是把“页表遍历”换成“页表状态采样”：用户传入起始虚拟地址、页数和结果位图地址，内核逐页找到 PTE，检查 `PTE_A` 是否置位，如果置位就把结果位图对应 bit 设为 1，并把 `PTE_A` 清掉，最后用 `copyout` 把 bitmask 送回用户态。
+
+> `PTE_A` 不是 `sys_pgaccess/sys_pgdirty` 主动“写上去”的，通常是 CPU/MMU 在页访问（读/写）时按 ISA 规则自动置位；系统调用做的是读取并按需清位，用于增量观测。
+
+我的实现在 `kernel/sysproc.c:sys_pgaccess()`，配套改动是：
+
+- `kernel/riscv.h` 增加 `PTE_A`
+- `kernel/syscall.h` 增加 `SYS_pgaccess`
+- `kernel/syscall.c` 注册 `sys_pgaccess`
+- `user/user.h` 增加 `pgaccess` 声明
+- `user/usys.pl` 增加 `entry("pgaccess")`
+
+在这个基础上我还补了一个 `pgdirty` 扩展（dirty 概念挺常见的）：逻辑和 `pgaccess` 平行，只是把 `PTE_A` 换成 `PTE_D`（Dirty 位，表示该页被写过）。会在命中后清位（`*pte &= ~PTE_D`）。
+
+> 这里顺手补一下 ISA 规范：`PTE_A` 和 `PTE_D` 的位置是 RISC-V Privileged ISA 对页表项（PTE）格式的规定。对于 Sv39，常用低位权限/状态位包括 `V/R/W/X/U/G/A/D`，其中 `A` 是 bit6、`D` 是 bit7，所以代码里写成 `1L << 6` 和 `1L << 7`。
+
+建议验证命令：
+
+```bash
+make clean
+make grade
+```
+
+进入 xv6 后先跑：
+
+```sh
+pgtbltest
+```
+
+如果启用了本文档里的 `pgdirty` 扩展，`pgtbltest` 会额外打印 `pgdirty_test: OK`。
+
+最后跑评分：
+
+```bash
+make grade
+```
+
+如果要用 gdb 观察 `ugetpid()` 读共享页的过程，可以按下面流程：
+
+```bash
+# 终端 A
+make qemu-gdb
+```
+
+```bash
+# 终端 B
+gdb-multiarch kernel/kernel
+```
+
+在 gdb 中依次输入：
+
+```gdb
+set architecture riscv:rv64
+target remote 127.0.0.1:26000
+add-symbol-file user/_pgtbltest 0
+break ugetpid
+continue
+```
+
+然后在 qemu shell 里运行：
+
+```sh
+ pgtbltest
+```
+
+命中断点后可直接查看：
+
+```gdb
+p u
+p u->pid
+```
+
+如果想进一步确认 `USYSCALL` 虚拟地址映射到的真实物理页，在 gdb 中输入：
+
+```gdb
+b proc_pagetable
+```
+
+然后打印：
+
+```gdb
+p/x p->usyscall # 0x87f1e000
+```
+
+> 在 xv6 的 qemu `virt` 机器里，RAM 基址是 `0x80000000`，所以 `0x87f1e000` 可以看成是从 RAM 基址偏移 `0x07f1e000` 的一页（由 `kalloc()` 从空闲页链表分配得到，不是固定值）。
+
+再补三个和真实系统相关的背景点：
+
+- 真实系统通常会做虚拟地址随机化（ASLR），同一进程每次运行看到的用户地址布局可能不同；xv6 为了教学可读性，布局更固定。
+- VA->PA 翻译由 MMU 完成，TLB 是它的缓存；TLB 命中时直接使用缓存翻译，未命中时才触发页表遍历。
+- 页表本体存放在主内存（RAM）里，不在用户堆里。xv6 中内核对物理内存做了 direct mapping，所以内核代码可以直接通过内核地址访问这些页表页。
+
+不同进程为什么会看到“同一个虚拟地址值但不同内容”？关键是切换页表这一步：
+
+```c
+w_satp(MAKE_SATP(p->pagetable));
+```
+
+这句会：
+
+- 把当前进程根页表的物理地址编码写入 `satp`。
+- 告诉 CPU 接下来用哪一张页表做地址翻译。
+
+因此同样是 `USYSCALL` 这个虚拟地址，进程 A 和进程 B 会被翻译到不同物理页，读到各自的 `pid`。

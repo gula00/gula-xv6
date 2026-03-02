@@ -1,0 +1,12 @@
+1) Which other xv6 system call(s) could be made faster using this shared page?
+
+`uptime` is a good candidate. The kernel can expose a read-only counter page (similar to USYSCALL) and userspace can read the current tick value directly, avoiding a trap for every call. In general, read-mostly, per-process or global values that do not require privilege checks are suitable for this optimization.
+
+2) Explain vmprint output with Fig 3-4.
+
+The printout shows a 3-level Sv39 page table. Each line corresponds to one valid PTE, and indentation depth matches the level in the tree. Non-leaf PTEs point to lower-level page-table pages; leaf PTEs map virtual pages to physical pages.
+
+Page 0 contains the user text (code) near VA 0.
+Page 2 contains user data/heap area (mapped user memory above code).
+For page 1, user mode cannot access it if PTE_U is cleared (xv6 uses it as an invalid guard page for the stack).
+The third-to-last page contains the USYSCALL mapping (read-only shared page with the process PID).

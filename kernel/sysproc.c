@@ -120,3 +120,47 @@ sys_sysinfo(void)
 
   return 0;
 }
+
+static uint64
+sys_pgbits(uint64 bit)
+{
+  uint64 va;
+  int len;
+  uint64 maskaddr;
+  unsigned int mask = 0;
+  struct proc *p = myproc();
+
+  argaddr(0, &va);
+  argint(1, &len);
+  argaddr(2, &maskaddr);
+
+  if(len < 0 || len > 32)
+    return -1;
+
+  for(int i = 0; i < len; i++) {
+    pte_t *pte = walk(p->pagetable, va + i * PGSIZE, 0);
+    if(pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+    if((*pte & bit) != 0) {
+      mask |= 1U << i;
+      *pte &= ~bit;
+    }
+  }
+
+  if(copyout(p->pagetable, maskaddr, (char *)&mask, sizeof(mask)) < 0)
+    return -1;
+
+  return 0;
+}
+
+uint64
+sys_pgaccess(void)
+{
+  return sys_pgbits(PTE_A);
+}
+
+uint64
+sys_pgdirty(void)
+{
+  return sys_pgbits(PTE_D);
+}

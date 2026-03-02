@@ -363,6 +363,8 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
+    if(va0 < PGSIZE)
+      return -1;
     if(va0 >= MAXVA)
       return -1;
     pte = walk(pagetable, va0, 0);
@@ -448,4 +450,28 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}
+
+static void
+vmprintwalk(pagetable_t pagetable, int level)
+{
+  for(int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if((pte & PTE_V) == 0)
+      continue;
+
+    for(int j = 0; j <= level; j++)
+      printf(" ..");
+    printf("%d: pte %p pa %p\n", i, (void *)pte, (void *)PTE2PA(pte));
+
+    if((pte & (PTE_R | PTE_W | PTE_X)) == 0)
+      vmprintwalk((pagetable_t)PTE2PA(pte), level + 1);
+  }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmprintwalk(pagetable, 0);
 }
