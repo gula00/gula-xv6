@@ -72,6 +72,68 @@ sys_sleep(void)
 }
 
 uint64
+sys_pause(void)
+{
+  int n;
+  uint ticks0;
+
+  argint(0, &n);
+  if(n < 0)
+    n = 0;
+
+  backtrace();
+
+  acquire(&tickslock);
+  ticks0 = ticks;
+  while(ticks - ticks0 < n){
+    if(killed(myproc())){
+      release(&tickslock);
+      return -1;
+    }
+    sleep(&ticks, &tickslock);
+  }
+  release(&tickslock);
+  return 0;
+}
+
+uint64
+sys_sigalarm(void)
+{
+  int interval;
+  uint64 handler;
+  struct proc *p = myproc();
+
+  argint(0, &interval);
+  argaddr(1, &handler);
+
+  if(interval <= 0){
+    p->alarm_interval = 0;
+    p->alarm_elapsed = 0;
+    p->alarm_handler = 0;
+    p->alarm_active = 0;
+  } else {
+    p->alarm_interval = interval;
+    p->alarm_elapsed = 0;
+    p->alarm_handler = handler;
+  }
+
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+  uint64 a0 = p->alarm_tf.a0;
+
+  memmove(p->trapframe, &p->alarm_tf, sizeof(*p->trapframe));
+  p->alarm_active = 0;
+  p->alarm_elapsed = 0;
+
+  return a0;
+}
+
+uint64
 sys_kill(void)
 {
   int pid;

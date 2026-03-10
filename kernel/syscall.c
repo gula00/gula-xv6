@@ -105,6 +105,9 @@ extern uint64 sys_trace(void);
 extern uint64 sys_sysinfo(void);
 extern uint64 sys_pgaccess(void);
 extern uint64 sys_pgdirty(void);
+extern uint64 sys_pause(void);
+extern uint64 sys_sigalarm(void);
+extern uint64 sys_sigreturn(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -134,6 +137,9 @@ static uint64 (*syscalls[])(void) = {
 [SYS_sysinfo] sys_sysinfo,
 [SYS_pgaccess] sys_pgaccess,
 [SYS_pgdirty] sys_pgdirty,
+[SYS_pause] sys_pause,
+[SYS_sigalarm] sys_sigalarm,
+[SYS_sigreturn] sys_sigreturn,
 };
 
 // An array mapping syscall numbers to their names.
@@ -163,6 +169,9 @@ static char *syscall_names[] = {
 [SYS_sysinfo] "sysinfo",
 [SYS_pgaccess] "pgaccess",
 [SYS_pgdirty] "pgdirty",
+[SYS_pause]   "pause",
+[SYS_sigalarm] "sigalarm",
+[SYS_sigreturn] "sigreturn",
 };
 
 void

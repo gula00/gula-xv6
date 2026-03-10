@@ -24,3 +24,6 @@
 #define SYS_sysinfo 23
 #define SYS_pgaccess 24
 #define SYS_pgdirty 25
+#define SYS_pause 26
+#define SYS_sigalarm 27
+#define SYS_sigreturn 28

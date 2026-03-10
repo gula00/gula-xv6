@@ -1,0 +1,17 @@
+1) Function arguments are passed in a0-a7. In main's call to printf, 13 is passed in a2.
+
+2) The call to f appears in main as a jal to f's symbol. The call to g may be inlined by the compiler (depending on optimization), so check call.asm for either a jal to g or inlined arithmetic.
+
+3) The address of printf is the symbol address shown in call.asm (or user/_call.sym). It depends on link layout, so use the locally generated files for the exact value.
+
+4) Right after jalr to printf in main, ra holds the return PC (the address of the instruction immediately after jalr in main).
+
+5) For:
+   unsigned int i = 0x00646c72;
+   printf("H%x Wo%s", 57616, (char *)&i);
+   output is: Hello World
+   Reason: little-endian byte order makes i's bytes read as 'r' 'l' 'd' '\0'.
+
+6) On a big-endian machine, set i to 0x726c6400 to yield the same string when read as char*. The number 57616 does not need to change.
+
+7) For printf("x=%d y=%d", 3), the value after y= is unspecified/garbage. Reason: the format asks for two integers but only one argument is provided, so printf reads whatever happens to be in the next argument register/stack slot.

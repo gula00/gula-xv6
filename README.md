@@ -51,7 +51,7 @@ make pku-tests-update TESTSUITS_DIR=./testsuits-for-oskernel
 
 这次实现了 5 个用户态工具：`sleep`、`pingpong`、`primes`、`find`、`xargs`。这些题虽然代码量不大，但非常考验对 Unix 进程模型、管道语义、文件描述符生命周期的理解。
 
-先说 `sleep`。这题最关键的是确认参数单位是 tick，不是秒。实现位置在 `user/sleep.c`，核心代码如下：
+先说 `sleep`。这题参数单位是 tick，不是秒。实现位置在 `user/sleep.c`。
 
 ```c
 if (argc != 2) {
@@ -64,9 +64,11 @@ exit(0);
 
 底层调用链路：用户态把参数 `n` 放在 `a0`，syscall 编号放在 `a7`，执行 `ecall` 陷入内核；CPU 发生 trap 后会从 U 模式进入 S 模式，并由 xv6 trap 入口保存用户寄存器现场到 `trapframe`。随后内核在 `syscall()` 里从 `trapframe->a7` 取编号分发到 `sys_sleep()`，再通过 `argint(0, &n)` 从 `trapframe->a0` 取到参数，最后把返回值写回 `trapframe->a0`，`sret` 返回用户态。
 
-从并发角度看，`sys_sleep()` 本身不负责唤醒，它只是调用 `sleep(&ticks, &tickslock)` 把当前进程挂到 channel `&ticks` 上；真正唤醒发生在时钟中断里 `wakeup(&ticks)`。这里锁配合也很关键：`acquire(&tickslock)` 保护 `ticks` 读写与条件判断，进入 `sleep(chan, lk)` 时会先拿 `p->lock` 再释放 `lk`，避免在“检查条件 -> 入睡”窗口丢失唤醒，同时也防止拿着全局锁睡眠导致其他 CPU 无法推进系统状态。这一套是典型的“条件锁 + 进程锁”协作模型。
+从并发角度看，`sys_sleep()` 本身不负责唤醒，它只是调用 `sleep(&ticks, &tickslock)` 把当前进程挂到 channel `&ticks` 上；真正唤醒发生在时钟中断里 `wakeup(&ticks)`。
 
-`pingpong` 题目要求父子进程来回传一个字节，所以我用了两条 pipe 做双向通道：一条父写子读，另一条子写父读。当前实现严格传 1 字节并在父进程 `wait(0)` 回收子进程，代码在 `user/pingpong.c`。核心片段如下：
+这里锁配合也很关键：`acquire(&tickslock)` 保护 `ticks` 读写与条件判断，进入 `sleep(chan, lk)` 时会先拿 `p->lock` 再释放 `lk`，避免在“检查条件 -> 入睡”窗口丢失唤醒，同时也防止拿着全局锁睡眠导致其他 CPU 无法推进系统状态。这一套是典型的“条件锁 + 进程锁”协作模型。
+
+`pingpong` 题目要求父子进程来回传一个字节，所以我用了两条 pipe 做双向通道：一条父写子读，另一条子写父读。当前实现严格传 1 字节并在父进程 `wait(0)` 回收子进程，代码在 `user/pingpong.c`。
 
 ```c
 if (write(p2c[1], "p", 1) != 1) {
@@ -80,7 +82,11 @@ if (read(c2p[0], &byte, 1) != 1) {
 printf("%d: received pong\n", getpid());
 ```
 
-`primes` 用了链式筛法：每一层进程先从左侧管道读到第一个数，这个数就是该层 prime（因为到这一层时它已经被前面所有 prime 过滤过，最先剩下的必然是新的质数），然后把后续不能被它整除的数转发到右侧新管道。右侧进程不是一次性建好，而是按需 `fork` 出来，下一层的输入/输出也确实来自这一层的 `pipe(right)`：`right[1]` 是当前层写端，`right[0]` 传给下一层当读端。这里还有个关键点是 fd 继承：`fork` 之后子进程会继承父进程的打开文件描述符（引用同一个管道端点），所以父子两边都要关闭自己不用的读/写端；否则只要还有进程持有写端，下游 `read` 也不会拿到 EOF。fd 数字本身通常会随着新 `pipe` 继续分配变大，但关闭后也可能被复用，所以调试时应关注“端口角色（读/写）和是否已关闭”，不要依赖某个固定 fd 值。实现在 `user/primes.c`：
+`primes` 用了链式筛法：每一层进程先从左侧管道读到第一个数，这个数就是该层 prime（因为到这一层时它已经被前面所有 prime 过滤过），然后把后续不能被它整除的数转发到右侧新管道。右侧进程不是一次性建好，而是按需 `fork` 出来。
+
+这里还有个关键点是 fd 继承：`fork` 之后子进程会继承父进程的打开文件描述符（引用同一个管道端点），所以父子两边都要关闭自己不用的读/写端；否则只要还有进程持有写端，下游 `read` 也不会拿到 EOF。fd 数字本身通常会随着新 `pipe` 继续分配变大，但关闭后也可能被复用。
+
+代码在 `user/primes.c`。
 
 ```c
 if (read(left_read, &prime, sizeof(prime)) == 0) {
@@ -90,7 +96,7 @@ if (read(left_read, &prime, sizeof(prime)) == 0) {
 printf("prime %d\n", prime);
 ```
 
-`find` 我基本按 `ls.c` 的目录遍历套路写：`open` 目录后循环 `read(dirent)`，按路径 `stat` 判断类型，如果是目录就递归进去。这里必须跳过 `.` 和 `..`，否则会无限递归。名字匹配时用 `strcmp`，匹配到了就打印完整路径。实现在 `user/find.c`，核心逻辑如下：
+`find` 我基本按 `ls.c` 的目录遍历套路写：`open` 目录后循环 `read(dirent)`，按路径 `stat` 判断类型，如果是目录就递归进去。这里必须跳过 `.` 和 `..`，否则会无限递归。实现在 `user/find.c`。
 
 ```c
 if (strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
@@ -98,9 +104,13 @@ if (strcmp(de.name, ".") == 0 || strcmp(de.name, "..") == 0)
 find(buf, filename);
 ```
 
-这一题顺便把文件系统对象关系串起来了：`struct dirent` 是目录项（核心是 `name + inum`），负责把“名字”枚举出来；`struct stat` 是元信息载体（`type/size/nlink/...`），负责告诉我们这个名字对应的是文件还是目录。`fstat(fd, &st)` 会走到内核 `sys_fstat -> filestat`，先从进程参数里拿到 fd 和用户态 `stat*` 地址，再读取 `struct file` 里挂着的 inode 信息，调用 `stati(ip, &st)` 把 inode 字段填到内核态 `st`，最后 `copyout(p->pagetable, user_addr, ...)` 把结果拷回用户空间。这里的 inode 可以理解成“文件实体记录”，保存类型、大小、数据块地址等，不保存文件名；文件名存在目录项里，通过 `inum` 指向 inode。
+这一题把文件系统对象关系串起来了：`struct dirent` 是目录项（核心是 `name + inum`）；`struct stat` 是元信息载体（`type/size/nlink/...`），负责告诉我们这个名字对应的是文件还是目录。
 
-最后是 `xargs`。这个实验只需要简化版：stdin 每读到一行就执行一次命令。我把 `xargs` 后面的固定参数先存入 `argv_exec`，再按字符读标准输入，遇到 `\n` 就把这一行作为额外参数拼进去，然后 `fork + exec`，父进程 `wait`。实现在 `user/xargs.c`，关键片段如下：
+`fstat(fd, &st)` 会走到内核 `sys_fstat -> filestat`，先从进程参数里拿到 fd 和用户态 `stat*` 地址，再读取 `struct file` 里挂着的 inode 信息，调用 `stati(ip, &st)` 把 inode 字段填到内核态 `st`，最后 `copyout(p->pagetable, user_addr, ...)` 把结果拷回用户空间。
+
+这里的 inode 保存类型、大小、数据块地址等，不保存文件名；文件名存在目录项里，通过 `inum` 指向 inode。
+
+最后是 `xargs`。stdin 每读到一行就执行一次命令。我把 `xargs` 后面的固定参数先存入 `argv_exec`，再按字符读标准输入，遇到 `\n` 就把这一行作为额外参数拼进去，然后 `fork + exec`，父进程 `wait`。实现在 `user/xargs.c`。
 
 ```c
 while (read(0, &c, 1) == 1) {
@@ -404,3 +414,37 @@ w_satp(MAKE_SATP(p->pagetable));
 - 告诉 CPU 接下来用哪一张页表做地址翻译。
 
 因此同样是 `USYSCALL` 这个虚拟地址，进程 A 和进程 B 会被翻译到不同物理页，读到各自的 `pid`。
+
+---
+
+## traps lab (backtrace + alarm)
+
+对应题目：<https://pdos.csail.mit.edu/6.828/2025/labs/traps.html>
+
+这章我把它理解成两件事：第一件是“看清楚 trap 发生时控制流到底怎么走”；第二件是“学会在 trap 里改写用户返回现场”。前半部分是 backtrace，后半部分是用户态定时 handler（`sigalarm/sigreturn`）。
+
+先说 backtrace。实现放在 `kernel/printf.c` 的 `backtrace()`，核心做法是沿着 frame pointer（`s0`）往上走：当前帧返回地址在 `fp-8`，上一个帧指针在 `fp-16`。因为每个内核栈是一页，所以我用当前 `fp` 所在页作为边界，走到越界就停。这样在 `sys_pause()` 里打一枪 `backtrace()`，跑 `bttest` 就能看到类似 `sysproc -> syscall -> trap` 这一串返回地址。为了后续排错方便，也在 `panic()` 里接了 `backtrace()`，panic 时直接带调用链。
+
+再说 alarm。目标是：进程每消耗 N 个 timer ticks，就在用户态插入一次 handler 调用；handler 执行完通过 `sigreturn()` 回到原来被打断的位置继续跑。这个功能最关键的不是“跳过去”，而是“跳回来还原现场”。
+
+我在 `struct proc` 里加了几组状态：
+
+- `alarm_interval`：间隔 N
+- `alarm_elapsed`：已累计 ticks
+- `alarm_handler`：用户 handler 地址
+- `alarm_active`：防止重入
+- `alarm_tf`：保存被打断时的完整 trapframe
+
+然后在 `usertrap()` 里只处理 timer interrupt（`which_dev == 2`）：如果开了 alarm 且当前不在 handler 中，就累计 tick；达到阈值时把当前 `trapframe` 备份到 `alarm_tf`，把 `epc` 改成 `alarm_handler`，并置 `alarm_active=1`。这样返回用户态后，CPU 会直接从 handler 入口执行。
+
+`sys_sigreturn()` 的职责是把 `alarm_tf` 原样恢复到 `p->trapframe`，并清掉 `alarm_active`。这里还有个细节：要返回被中断前的 `a0`，否则会被 syscall 返回值污染，`alarmtest` 里的寄存器一致性检查会挂。
+
+为了对齐 2025 版本题目，我额外加了 `pause()` syscall（内部逻辑与 `sleep()` 类似），并在 `sys_pause()` 里调用 `backtrace()`，这样 `bttest` 可以直接触发回溯。
+
+这章最容易踩的坑我遇到过三个：
+
+- 只改了 `epc` 没保存全寄存器，handler 返回后主流程变量错乱。
+- 忘了重入保护，handler 还没 `sigreturn` 又被 timer 打断二次进入。
+- `sigreturn` 返回值处理不对，`a0` 被覆盖，导致 test3 失败。
+
+建议验证顺序：先 `bttest` 看 backtrace，再 `alarmtest` 跑 test0~test3，最后 `usertests -q` 收尾。

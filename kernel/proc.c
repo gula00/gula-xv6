@@ -125,6 +125,11 @@ found:
   p->pid = allocpid();
   p->state = USED;
   p->trace_mask = 0;
+  p->alarm_interval = 0;
+  p->alarm_elapsed = 0;
+  p->alarm_handler = 0;
+  p->alarm_active = 0;
+  memset(&p->alarm_tf, 0, sizeof(p->alarm_tf));
   p->usyscall = 0;
 
   // Allocate a trapframe page.
@@ -181,6 +186,11 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->trace_mask = 0;
+  p->alarm_interval = 0;
+  p->alarm_elapsed = 0;
+  p->alarm_handler = 0;
+  p->alarm_active = 0;
+  memset(&p->alarm_tf, 0, sizeof(p->alarm_tf));
   p->state = UNUSED;
 }
 
@@ -326,6 +336,11 @@ fork(void)
 
   // copy trace mask from parent to child.
   np->trace_mask = p->trace_mask;
+  np->alarm_interval = p->alarm_interval;
+  np->alarm_elapsed = 0;
+  np->alarm_handler = p->alarm_handler;
+  np->alarm_active = 0;
+  memset(&np->alarm_tf, 0, sizeof(np->alarm_tf));
 
   // increment reference counts on open file descriptors.
   for(i = 0; i < NOFILE; i++)
